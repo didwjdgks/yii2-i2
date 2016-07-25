@@ -1,10 +1,16 @@
 <?php
 namespace i2\models;
 
+use i2\Module;
+
 class BidRes extends \yii\db\ActiveRecord
 {
   public static function tableName(){
     return 'bid_res';
+  }
+
+  public static function getDb(){
+    return Module::getInstance()->db;
   }
 
   public function rules(){
