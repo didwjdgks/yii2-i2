@@ -1,8 +1,6 @@
 <?php
 namespace i2\controllers;
 
-use GearmamWorker;
-
 use yii\helpers\Console;
 use yii\helpers\Json;
 use yii\helpers\ArrayHelper;
@@ -14,7 +12,7 @@ use i2\models\BidSuccom;
 class AutoController extends \yii\console\Controller
 {
   public function actionBid(){
-    $w=new GearmanWorker;
+    $w=new \GearmanWorker;
     $w->addServers($this->module->gman_server);
     $w->addFunction('i2_auto_bid',[$this,'bid_work']);
     while($w->work());
@@ -46,12 +44,87 @@ class AutoController extends \yii\console\Controller
    * 취소
    */
   private function bid_c($workload){
+    $bidkey=BidKey::findOne($workload['bidid']);
+    if($bidkey!==null) return;
+
+    list($bidno)=explode('-',$workload['bidid']);
+    $prev=BidKey::find()->where("bidid like '$bidno%'")
+      ->orderBy('bidid desc')->limit(1)->one();
+    if($prev===null) return;
+
+    try{
+      if($prev->state!='Y'){
+        $bidkey=new BidKey;
+        $bidkey->attributes=$prev->attributes;
+        $bidkey->bidid=$workload['bidid'];
+        $bidkey->state='D';
+        $bidkey->writedt=date('Y-m-d H:i:s');
+        $bidkey->editdt=date('Y-m-d H:i:s');
+        $bidkey->save();
+        $prev->state='D';
+        $prev->save();
+        return;
+      }
+
+      $bidkey=new BidKey;
+      $bidkey->attributes=$prev->attributes;
+      $bidkey->bidid=$workload['bidid'];
+      $bidkey->writedt=date('Y-m-d H:i:s',strtotime($prev->writedt)+1);
+      $bidkey->editdt=date('Y-m-d H:i:s');
+      $bidkey->state='Y';
+      $bidkey->bidproc='C';
+      if(($bidkey->opt&pow(2,1))==0) $bidkey->opt=$bidkey->opt+pow(2,1); //정정
+
+      $prevVal=$prev->bidValue;
+      $bidvalue=new BidValue;
+      $bidvalue->attributes=$prevVal->attributes;
+      $bidvalue->bidid=$bidkey->bidid;
+
+      $prevCon=$prev->bidContent;
+      $bidcontent=new BidContent;
+      $bidcontent->attributes=$prevCon->attributes;
+      $bidcontent->bidid=$bidkey->bidid;
+      if($workload['bid_html'])
+        $bidcontent->bid_html=$workload['bid_html'];
+      if($workload['bidcomment'])
+        $bidcontent->bidcomment=$workload['bidcomment'];
+
+      $bidcontent->save();
+      $bidvalue->save();
+      $bidkey->save();
+
+      $prev->bidproc='M';
+      $prev->editdt=date('Y-m-d H:i:s');
+      $prev->save();
+    }catch(\Exception $e){
+      throw $e;
+    }
   }
 
   /**
    * 정정
    */
   private function bid_m($workload){
+    $bidkey=BidKey::findOne($workload['bidid']);
+    if($bidkey!==null) return;
+
+    list($bidno)=explode('-',$workload['bidid']);
+    $prev=BidKey::find()->where("bidid like '$bidno%'")
+      ->orderBy('bidid desc')->limit(1)->one();
+    if($prev!==null){
+      $prev->bidproc='M';
+      $prev->editdt=date('Y-m-d H:i:s');
+      try{
+        $prev->save();
+      }catch(\Exception $e){
+        throw $e;
+      }
+    }
+
+    if(!isset($workload['opt'])) $workload['opt']=pow(2,1);
+    else if(($workload['opt']&pow(2,1))==0) $workload['opt']+=pow(2,1);
+
+    return $this->bid_b($workload);
   }
 
   /**
@@ -61,6 +134,7 @@ class AutoController extends \yii\console\Controller
     $bidkey=BidKey::findOne($workload['bidid']);
     if($bidkey!==null) return;
 
+    $bidkey=new BidKey;
     $bidkey->bidid=$workload['bidid'];
     $bidkey->notinum=$workload['notinum'];
     $bidkey->whereis=$workload['whereis'];
@@ -70,6 +144,7 @@ class AutoController extends \yii\console\Controller
     $bidkey->org_i=$workload['org_i'];
     $bidkey->bidcls=$workload['bidcls'];
     $bidkey->succls=$workload['succls'];
+    $bidkey->conlevel=$workload['conlevel'];
     $bidkey->noiticedt=$workload['noticedt'];
     $bidkey->basic=$workload['basic'];
     $bidkey->presum=$workload['presum'];
@@ -77,12 +152,15 @@ class AutoController extends \yii\console\Controller
     $bidkey->opendt=$workload['opendt'];
     $bidkey->closedt=$workload['closedt'];
     $bidkey->constdt=$workload['constdt'];
+    $bidkey->explaindt=$workload['explaindt'];
+    $bidkey->agreedt=$workload['agreedt'];
     $bidkey->pqdt=$workload['pqdt'];
     $bidkey->convention=$workload['convention'];
     $bidkey->bidproc='B';
     $bidkey->state=$workload['state'];
     $bidkey->writedt=$workload['writedt']?$workload['writedt']:date('Y-m-d H:i:s');
     $bidkey->editdt=date('Y-m-d H:i:s');
+    $bidkey->opt=$workload['opt'];
 
     $codeorg=CodeOrgI::findByOrgname($bidkey->org_i);
     if($codeorg!==null) $bidkey->orgcode_i=$codeorg->org_Scode;
@@ -111,7 +189,7 @@ class AutoController extends \yii\console\Controller
   }
 
   public function actionSuc(){
-    $w=new GearmanWorker;
+    $w=new \GearmanWorker;
     $w->addServers($this->module->gman_server);
     $w->addFunction('i2_auto_suc',[$this,'suc_work']);
     while($w->work());

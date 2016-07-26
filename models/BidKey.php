@@ -40,5 +40,13 @@ class BidKey extends \yii\db\ActiveRecord
     if($this->constnm) $this->constnm=iconv('euckr','utf-8',$this->constnm);
     if($this->org_i) $this->org_i=iconv('euckr','utf-8',$this->org_i);
   }
+
+  public function getBidValue(){
+    return $this->hasOne(BidValue::className(),['bidid'=>'bidid']);
+  }
+
+  public function getBidContent(){
+    return $this->hasOne(BidContent::className(),['bidid'=>'bidid']);
+  }
 }
 
