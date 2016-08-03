@@ -15,6 +15,10 @@ class BidContent extends \yii\db\ActiveRecord
 
   public function rules(){
     return [
+      [['bidid'],'required'],
+      [['bidcomment_mod','bidcomment','nbidcomment'],'safe'],
+      [['orign_lnk','s_orign_lnk','attchd_lnk','pur_lnk'],'safe'],
+      [['bid_html','nbid_html','bid_file','nbid_file','pur_goods'],'safe'],
     ];
   }
   

@@ -7,6 +7,10 @@ class CodeOrgI extends \yii\db\ActiveRecord
     return 'code_org_i';
   }
 
+  public static function getDb(){
+    return \i2\Module::getInstance()->db;
+  }
+
   public function rules(){
     return [
     ];

@@ -21,6 +21,12 @@ class BidKey extends \yii\db\ActiveRecord
       [['bidcls'],'default','value'=>'01'],
       [['contract'],'default','value'=>'10'],
       [['succls'],'default','value'=>'00'],
+      [['bidid'],'required'],
+      [['whereis','syscode','bidtype','bidview','notinum','notinum_ex'],'safe'],
+      [['constnm','org','org_i','orgcode_i','conlevel','concode','sercode','purcode'],'safe'],
+      [['location','convention','presum','basic','pct'],'safe'],
+      [['noticedt','registdt','explaindt','agreedt','opendt','closedt','constdt','writedt','pqdt','docdt','editdt'],'safe'],
+      [['inputer','inspecter','state','no','lock','isclosed'],'safe'],
     ];
   }
   

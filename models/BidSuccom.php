@@ -26,6 +26,7 @@ class BidSuccom extends \yii\db\ActiveRecord
     if(parent::beforeSave($insert)){
       if($this->officenm) $this->officenm=iconv('utf-8','euckr',$this->officenm);
       if($this->prenm) $this->prenm=iconv('utf-8','euckr',$this->prenm);
+      if($this->etc) $this->etc=iconv('utf-8','euckr',$this->etc);
       return true;
     }
     return false;
@@ -35,6 +36,7 @@ class BidSuccom extends \yii\db\ActiveRecord
     parent::afterFind();
     if($this->officenm) $this->officenm=iconv('euckr','utf-8',$this->officenm);
     if($this->prenm) $this->prenm=iconv('euckr','utf-8',$this->prenm);
+    if($this->etc) $this->etc=iconv('euckr','utf-8',$this->etc);
   }
 }
 

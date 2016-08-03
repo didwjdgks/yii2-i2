@@ -6,20 +6,24 @@ use yii\helpers\Json;
 use yii\helpers\ArrayHelper;
 
 use i2\models\BidKey;
+use i2\models\BidValue;
+use i2\models\BidContent;
 use i2\models\BidRes;
 use i2\models\BidSuccom;
+use i2\models\CodeOrgI;
 
 class AutoController extends \yii\console\Controller
 {
   public function actionBid(){
     $w=new \GearmanWorker;
     $w->addServers($this->module->gman_server);
-    $w->addFunction('i2_auto_bid',[$this,'bid_work']);
+    $w->addFunction($this->module->i2_auto_bid,[$this,'bid_work']);
     while($w->work());
   }
 
   public function bid_work($job){
-    $workload=$job->workload();
+    $workload=Json::decode($job->workload());
+    $this->stdout("i2> [{$workload['whereis']}] {$workload['notinum']} {$workload['constnm']} ({$workload['bidproc']})\n");
     try {
       switch($workload['bidproc']){
         case 'C':
@@ -38,21 +42,27 @@ class AutoController extends \yii\console\Controller
       \Yii::error($e,'i2');
     }
     $this->module->db->close();
+    $this->stdout(sprintf("[%s] Peak memory usage: %sMb\n",
+      date('Y-m-d H:i:s'),
+      (memory_get_peak_usage(true)/1024/1024)
+    ),Console::FG_GREY);
   }
 
   /**
    * 취소
    */
   private function bid_c($workload){
-    $bidkey=BidKey::findOne($workload['bidid']);
-    if($bidkey!==null) return;
-
-    list($bidno)=explode('-',$workload['bidid']);
-    $prev=BidKey::find()->where("bidid like '$bidno%'")
-      ->orderBy('bidid desc')->limit(1)->one();
-    if($prev===null) return;
-
     try{
+      $bidkey=BidKey::findOne($workload['bidid']);
+      if($bidkey!==null) return;
+
+      list($bidno)=explode('-',$workload['bidid']);
+      $prev=BidKey::find()->where("bidid like '$bidno%'")
+        ->orderBy('bidid desc')->limit(1)->one();
+      if($prev===null) return;
+
+      $maxno=$this->module->db->createCommand("select max([[no]]) from {{bid_key}}")->queryScalar();
+
       if($prev->state!='Y'){
         $bidkey=new BidKey;
         $bidkey->attributes=$prev->attributes;
@@ -60,6 +70,7 @@ class AutoController extends \yii\console\Controller
         $bidkey->state='D';
         $bidkey->writedt=date('Y-m-d H:i:s');
         $bidkey->editdt=date('Y-m-d H:i:s');
+        $bidkey->no=$maxno+1;
         $bidkey->save();
         $prev->state='D';
         $prev->save();
@@ -74,6 +85,7 @@ class AutoController extends \yii\console\Controller
       $bidkey->state='Y';
       $bidkey->bidproc='C';
       if(($bidkey->opt&pow(2,1))==0) $bidkey->opt=$bidkey->opt+pow(2,1); //정정
+      $bidkey->no=$maxno+1;
 
       $prevVal=$prev->bidValue;
       $bidvalue=new BidValue;
@@ -96,6 +108,7 @@ class AutoController extends \yii\console\Controller
       $prev->bidproc='M';
       $prev->editdt=date('Y-m-d H:i:s');
       $prev->save();
+
     }catch(\Exception $e){
       throw $e;
     }
@@ -137,6 +150,7 @@ class AutoController extends \yii\console\Controller
     $bidkey=new BidKey;
     $bidkey->bidid=$workload['bidid'];
     $bidkey->notinum=$workload['notinum'];
+    $bidkey->notinum_ex=$workload['notinum_ex'];
     $bidkey->whereis=$workload['whereis'];
     $bidkey->bidtype=$workload['bidtype'];
     $bidkey->bidview=$workload['bidview']?$workload['bidview']:$workload['bidtype'];
@@ -145,7 +159,7 @@ class AutoController extends \yii\console\Controller
     $bidkey->bidcls=$workload['bidcls'];
     $bidkey->succls=$workload['succls'];
     $bidkey->conlevel=$workload['conlevel'];
-    $bidkey->noiticedt=$workload['noticedt'];
+    $bidkey->noticedt=$workload['noticedt'];
     $bidkey->basic=$workload['basic'];
     $bidkey->presum=$workload['presum'];
     $bidkey->contract=$workload['contract'];
@@ -161,6 +175,10 @@ class AutoController extends \yii\console\Controller
     $bidkey->writedt=$workload['writedt']?$workload['writedt']:date('Y-m-d H:i:s');
     $bidkey->editdt=date('Y-m-d H:i:s');
     $bidkey->opt=$workload['opt'];
+    $bidkey->state='N';
+
+    $maxno=$this->module->db->createCommand("select max([[no]]) from bid_key")->queryScalar();
+    $bidkey->no=$maxno+1;
 
     $codeorg=CodeOrgI::findByOrgname($bidkey->org_i);
     if($codeorg!==null) $bidkey->orgcode_i=$codeorg->org_Scode;
@@ -191,12 +209,13 @@ class AutoController extends \yii\console\Controller
   public function actionSuc(){
     $w=new \GearmanWorker;
     $w->addServers($this->module->gman_server);
-    $w->addFunction('i2_auto_suc',[$this,'suc_work']);
+    $w->addFunction($this->module->i2_auto_suc,[$this,'suc_work']);
     while($w->work());
   }
 
   public function suc_work($job){
-    $workload=$job->workload();
+    $workload=Json::decode($job->workload());
+    $this->stdout("i2> [{$workload['whereis']}] {$workload['notinum']} {$workload['constnm']} ({$workload['bidproc']})\n");
     try {
       switch($workload['bidproc']){
         case 'F':
@@ -212,6 +231,10 @@ class AutoController extends \yii\console\Controller
       \Yii::error($e,'i2');
     }
     $this->module->db->close();
+    $this->stdout(sprintf("[%s] Peak memory usage: %sMb\n",
+      date('Y-m-d H:i:s'),
+      (memory_get_peak_usage(true)/1024/1024)
+    ),Console::FG_GREY);
   }
 
   /**
@@ -233,6 +256,7 @@ class AutoController extends \yii\console\Controller
     $bidres->reswdt=date('Y-m-d H:i:s');
     $bidres->save();
 
+    if(($bidkey->opt&pow(2,5))==0) $bidkey->opt+=pow(2,5);
     $bidkey->bidproc='F';
     $bidkey->resdt=date('Y-m-d H:i:s');
     $bidkey->editdt=date('Y-m-d H:i:s');
@@ -247,18 +271,23 @@ class AutoController extends \yii\console\Controller
    * 개찰 처리
    */
   private function suc_s($workload){
-    $bidkey=BidKey::findOne($workload['bidkey']);
+    $bidkey=BidKey::findOne($workload['bidid']);
     if($bidkey===null) return;
     $out[]="[i2] [$bidkey->bidid] %g$bidkey->notinum%n $bidkey->constnm";
 
     $bidres=BidRes::findOne($bidkey->bidid);
     if($bidres===null){
-      $bidres=new BidRes(['bidid'=>$bidid]);
+      $bidres=new BidRes(['bidid'=>$bidkey->bidid]);
     }
     $bidres->yega=$workload['yega'];
     $bidres->innum=$workload['innum'];
     $bidres->selms=$workload['selms'];
     $bidres->multispare=$workload['multispare'];
+    $bidres->officenm1=$workload['officenm1'];
+    $bidres->prenm1=$workload['prenm1'];
+    $bidres->officeno1=$workload['officeno1'];
+    $bidres->success1=$workload['success1'];
+    $bidres->reswdt=date('Y-m-d H:i:s');
     $bidres->save();
 
     $out[]="%y개찰%n";
@@ -288,6 +317,7 @@ class AutoController extends \yii\console\Controller
       Console::endProgress();
     }
 
+    if(($bidkey->opt&pow(2,5))==0) $bidkey->opt+=pow(2,5);
     $bidkey->bidproc='S';
     $bidkey->resdt=date('Y-m-d H:i:s');
     $bidkey->editdt=date('Y-m-d H:i:s');

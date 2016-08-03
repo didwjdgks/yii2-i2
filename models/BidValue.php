@@ -15,6 +15,11 @@ class BidValue extends \yii\db\ActiveRecord
 
   public function rules(){
     return [
+      [['bidid'],'required'],
+      [['scrcls','scrid','constno','refno','realorg','yegatype','yegarng'],'safe'],
+      [['prevamt','multispare','parbasic','lvcnt','contloc','contper','charger'],'safe'],
+      [['exptax','contract_money','government_money','promise_org','c_exp_cost'],'safe'],
+      [['pre_cost','industry_code'],'safe'],
     ];
   }
 
