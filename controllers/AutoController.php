@@ -22,9 +22,9 @@ class AutoController extends \yii\console\Controller
   }
 
   public function bid_work($job){
-    $workload=Json::decode($job->workload());
-    $this->stdout("i2> [{$workload['whereis']}] {$workload['notinum']} {$workload['constnm']} ({$workload['bidproc']})\n");
     try {
+      $workload=Json::decode($job->workload());
+      $this->stdout("i2> [{$workload['whereis']}] {$workload['bidid']} {$workload['notinum']} {$workload['constnm']} ({$workload['bidproc']})\n");
       switch($workload['bidproc']){
         case 'C':
           $this->bid_c($workload);
@@ -54,12 +54,23 @@ class AutoController extends \yii\console\Controller
   private function bid_c($workload){
     try{
       $bidkey=BidKey::findOne($workload['bidid']);
-      if($bidkey!==null) return;
+      if($bidkey!==null){
+        $this->stdout(" > 이미 등록된 취소공고입니다.\n",Console::FG_YELLOW);
+        return;
+      }
 
       list($bidno)=explode('-',$workload['bidid']);
       $prev=BidKey::find()->where("bidid like '$bidno%'")
         ->orderBy('bidid desc')->limit(1)->one();
-      if($prev===null) return;
+      if($prev===null){
+        $this->stdout(" > 취소 전 공고가 없습니다.\n",Console::FG_YELLOW);
+        return;
+      }
+
+      if($prev->bidproc==='C'){
+        $this->stdout(" > 이미 등록된 취소공고입니다.\n",Console::FG_YELLOW);
+        return;
+      }
 
       $maxno=$this->module->db->createCommand("select max([[no]]) from {{bid_key}}")->queryScalar();
 
@@ -68,12 +79,15 @@ class AutoController extends \yii\console\Controller
         $bidkey->attributes=$prev->attributes;
         $bidkey->bidid=$workload['bidid'];
         $bidkey->state='D';
+        $bidkey->bidproc='C';
         $bidkey->writedt=date('Y-m-d H:i:s');
         $bidkey->editdt=date('Y-m-d H:i:s');
         $bidkey->no=$maxno+1;
         $bidkey->save();
         $prev->state='D';
+        $prev->bidproc='M';
         $prev->save();
+        $this->stdout(" > 입력 전 취소공고입니다. 삭제합니다.\n",Console::FG_YELLOW);
         return;
       }
 
@@ -109,6 +123,8 @@ class AutoController extends \yii\console\Controller
       $prev->editdt=date('Y-m-d H:i:s');
       $prev->save();
 
+      $this->stdout(" > 취고공고 입력이 완료되었습니다.\n",Console::FG_GREEN);
+
     }catch(\Exception $e){
       throw $e;
     }
@@ -129,6 +145,7 @@ class AutoController extends \yii\console\Controller
       $prev->editdt=date('Y-m-d H:i:s');
       try{
         $prev->save();
+        $this->stdout(" > 정정전공고 처리완료\n",Console::FG_GREEN);
       }catch(\Exception $e){
         throw $e;
       }
@@ -156,10 +173,12 @@ class AutoController extends \yii\console\Controller
     $bidkey->bidview=$workload['bidview']?$workload['bidview']:$workload['bidtype'];
     $bidkey->constnm=$workload['constnm'];
     $bidkey->org_i=$workload['org_i'];
+    $bidkey->orgcode_y=$workload['orgcode_y']; //도로공사 bidseq 저장 (차수정보)
     $bidkey->bidcls=$workload['bidcls'];
     $bidkey->succls=$workload['succls'];
     $bidkey->conlevel=$workload['conlevel'];
     $bidkey->noticedt=$workload['noticedt'];
+		$bidkey->registdt=$workload['registdt'];
     $bidkey->basic=$workload['basic'];
     $bidkey->presum=$workload['presum'];
     $bidkey->contract=$workload['contract'];
@@ -200,6 +219,8 @@ class AutoController extends \yii\console\Controller
       $bidvalue->save();
       $bidcontent->save();
       $bidkey->save();
+      if(($bidkey->opt&pow(2,1))>0) $this->stdout(" > 정정공고 입력이 완료되었습니다.\n",Console::FG_GREEN);
+      else $this->stdout(" > 일반공고 입력이 완료되었습니다.\n",Console::FG_GREEN);
     }
     catch(\Exception $e){
       throw $e;
@@ -215,8 +236,8 @@ class AutoController extends \yii\console\Controller
 
   public function suc_work($job){
     $workload=Json::decode($job->workload());
-    $this->stdout("i2> [{$workload['whereis']}] {$workload['notinum']} {$workload['constnm']} ({$workload['bidproc']})\n");
-    try {
+    try {  
+      $this->stdout("i2> [{$workload['bidid']}] {$workload['notinum']} {$workload['constnm']} ({$workload['bidproc']})\n");
       switch($workload['bidproc']){
         case 'F':
           $this->suc_f($workload);
@@ -231,7 +252,7 @@ class AutoController extends \yii\console\Controller
       \Yii::error($e,'i2');
     }
     $this->module->db->close();
-    $this->stdout(sprintf("[%s] Peak memory usage: %sMb\n",
+    $this->stdout(sprintf(" [%s] Peak memory usage: %sMb\n",
       date('Y-m-d H:i:s'),
       (memory_get_peak_usage(true)/1024/1024)
     ),Console::FG_GREY);
