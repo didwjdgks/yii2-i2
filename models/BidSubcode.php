@@ -7,8 +7,14 @@ class BidSubcode extends \yii\db\ActiveRecord
     return 'bid_subcode';
   }
 
+  public static function getDb(){
+    return \i2\Module::getInstance()->db;
+  }
+
   public function rules(){
     return [
+      [['bidid','g2b_code'],'required'],
+      [['g2b_code_nm','i2_code','pri_cont','share'],'safe'],
     ];
   }
 

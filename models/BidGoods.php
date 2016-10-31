@@ -7,8 +7,14 @@ class BidGoods extends \yii\db\ActiveRecord
     return 'bid_goods';
   }
 
+  public static function getDb(){
+    return \i2\Module::getInstance()->db;
+  }
+
   public function rules(){
     return [
+      [['bidid','seq'],'required'],
+      [['gname','gorg','standard','unit','unitcost','period','place','condition'],'safe'],
     ];
   }
 

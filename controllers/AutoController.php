@@ -11,13 +11,44 @@ use i2\models\BidContent;
 use i2\models\BidRes;
 use i2\models\BidSuccom;
 use i2\models\CodeOrgI;
+use i2\models\BidGoods;
+use i2\models\BidSubcode;
+use i2\models\BidLocal;
+use i2\models\CodeLocal;
 
 class AutoController extends \yii\console\Controller
 {
+  public function stdout2($string){
+    $this->stdout(Console::renderColoredString($string));
+  }
+
   public function actionBid(){
     $w=new \GearmanWorker;
     $w->addServers($this->module->gman_server);
     $w->addFunction($this->module->i2_auto_bid,[$this,'bid_work']);
+    //------------------
+    // 기초금액
+    //------------------
+    $w->addFunction('i2_auto_basic',function($job){
+      try{
+        $workload=Json::decode($job->workload());
+        $bidkey=BidKey::findOne($workload['bidid']);
+        if($bidkey===null){
+          $this->stdout2("%rerror> not found bidid: {$workload['bidid']}%n\n");
+          return;
+        }
+        $this->stdout2("%4i2> [기초금액] {$bidkey->whereis} {$bidkey->notinum} {$bidkey->constnm}%n\n");
+        $basic=str_replace(',','',$workload['basic']);
+        if($basic>0){
+          $bidkey->basic=$basic;
+          if(($bidkey->opt&pow(2,9))==0) $bidkey->opt=$bidkey->opt+pow(2,9);
+          $bidkey->save();
+        }
+      }catch(\Exception $e){
+        $this->stdout($e->getMessage()."\n",Console::FG_RED);
+        \Yii::error($e,'kepco');
+      }
+    });
     while($w->work());
   }
 
@@ -35,6 +66,9 @@ class AutoController extends \yii\console\Controller
         case 'B':
           $this->bid_b($workload);
           break;
+        case 'L':
+          $this->bid_l($workload);
+          break;
       }
     }
     catch(\Exception $e){
@@ -46,6 +80,80 @@ class AutoController extends \yii\console\Controller
       date('Y-m-d H:i:s'),
       (memory_get_peak_usage(true)/1024/1024)
     ),Console::FG_GREY);
+  }
+
+  /**
+   * 연기공고
+   */
+  private function bid_l($workload){
+    $prev=BidKey::findOne($workload['previd']);
+    if($prev===null){
+      $this->stdout(" 등록되지 않은 공고입니다.\n",Console::FG_RED);
+      return;
+    }
+    if($workload['closedt'] <= $prev->closedt){
+      $this->stdout(" 입찰마감일이 동일합니다.\n",Console::FG_YELLOW);
+      return;
+    }
+
+    list($a,$b,$c,$d)=explode('-',$prev->bidid);
+    $b=sprintf('%02s',intval($b)+1);
+    $newid="$a-$b-$c-$d";
+
+    $maxno=$this->module->db->createCommand("select max([[no]]) from {{bid_key}}")->queryScalar();
+
+    $bidkey=new BidKey;
+    $bidkey->attributes=$prev->attributes;
+    $bidkey->bidid=$newid;
+    $bidkey->writedt=date('Y-m-d H:i:s');
+    $bidkey->editdt=date('Y-m-d H:i:s');
+    $bidkey->bidproc='B';
+    if(($bidkey->opt&pow(2,1))==0) $bidkey->opt=$bidkey->opt+pow(2,1); //정정
+    if(($bidkey->opt&pow(2,18))==0) $bidkey->opt=$bidkey->opt+pow(2,18); //연기
+    $bidkey->no=$maxno+1;
+    if($workload['registdt']) $bidkey->registdt=$workload['registdt'];
+    $bidkey->constdt=$workload['constdt'];
+    $bidkey->closedt=$workload['closedt'];
+    $bidkey->state='N';
+    $bidkey->save();
+
+    $prevVal=$prev->bidValue;
+    $bidvalue=new BidValue;
+    $bidvalue->attributes=$prevVal->attributes;
+    $bidvalue->bidid=$bidkey->bidid;
+
+    $prevCon=$prev->bidContent;
+    $bidcontent=new BidContent;
+    $bidcontent->attributes=$prevCon->attributes;
+    $bidcontent->bidid=$bidkey->bidid;
+
+    $prevGoods=$prev->bidGoods;
+    foreach($prevGoods as $val){
+      $bidgoods=new BidGoods;
+      $bidgoods->attributes=$val->attributes;
+      $bidgoods->bidid=$bidkey->bidid;
+      $bidgoods->save();
+    }
+
+    $prevSubcodes=$prev->bidSubcode;
+    foreach($prevSubcodes as $val){
+      $bidsubcode=new BidSubcode;
+      $bidsubcode->attributes=$val->attributes;
+      $bidsubcode->bidid=$bidkey->bidid;
+      $bidsubcode->save();
+    }
+
+    $prev->bidproc='L';
+    $prev->editdt=date('Y-m-d H:i:s');
+    $prev->save();
+
+    $bidcontent->save();
+    $bidvalue->save();
+
+    $bidkey->state='Y';
+    $bidkey->save();
+		
+    $this->stdout(" 연기공고 입력이 완료되었습니다.\n");
   }
 
   /**
@@ -98,8 +206,14 @@ class AutoController extends \yii\console\Controller
       $bidkey->editdt=date('Y-m-d H:i:s');
       $bidkey->state='Y';
       $bidkey->bidproc='C';
-      if(($bidkey->opt&pow(2,1))==0) $bidkey->opt=$bidkey->opt+pow(2,1); //정정
+      if(($bidkey->opt&pow(2,16))==0) $bidkey->opt=$bidkey->opt+pow(2,16); //취소
       $bidkey->no=$maxno+1;
+
+			if(strpos($workload['constnm'],'//')!==false){
+				$bidkey->constnm=$workload['constnm'].'(취소)';
+			}else{
+				$bidkey->constnm=$workload['constnm'].'//'.'(취소)';
+			}
 
       $prevVal=$prev->bidValue;
       $bidvalue=new BidValue;
@@ -115,15 +229,33 @@ class AutoController extends \yii\console\Controller
       if($workload['bidcomment'])
         $bidcontent->bidcomment=$workload['bidcomment'];
 
-      $bidcontent->save();
-      $bidvalue->save();
-      $bidkey->save();
+      $prevGoods=$prev->bidGoods;
+      foreach($prevGoods as $val){
+        $bidgoods=new BidGoods;
+        $bidgoods->attributes=$val->attributes;
+        $bidgoods->bidid=$bidkey->bidid;
+        $bidgoods->save();
+      }
 
-      $prev->bidproc='M';
+      $prevSubcodes=$prev->bidSubcode;
+      foreach($prevSubcodes as $val){
+        $bidsubcode=new BidSubcode;
+        $bidsubcode->attributes=$val->attributes;
+        $bidsubcode->bidid=$bidkey->bidid;
+        $bidsubcode->save();
+      }
+
+      $bidcontent->save();
+      $bidkey->save();
+			$bidvalue->save();
+      
+
+      if(($prev->opt&pow(2,16))==0) $prev->opt=$prev->opt+pow(2,16); //취소
+			$prev->bidproc='M';			
       $prev->editdt=date('Y-m-d H:i:s');
       $prev->save();
 
-      $this->stdout(" > 취고공고 입력이 완료되었습니다.\n",Console::FG_GREEN);
+      $this->stdout(" > 취소공고 입력이 완료되었습니다.\n",Console::FG_GREEN);
 
     }catch(\Exception $e){
       throw $e;
@@ -169,6 +301,7 @@ class AutoController extends \yii\console\Controller
     $bidkey->notinum=$workload['notinum'];
     $bidkey->notinum_ex=$workload['notinum_ex'];
     $bidkey->whereis=$workload['whereis'];
+		$bidkey->syscode=$workload['syscode'];
     $bidkey->bidtype=$workload['bidtype'];
     $bidkey->bidview=$workload['bidview']?$workload['bidview']:$workload['bidtype'];
     $bidkey->constnm=$workload['constnm'];
@@ -189,6 +322,7 @@ class AutoController extends \yii\console\Controller
     $bidkey->agreedt=$workload['agreedt'];
     $bidkey->pqdt=$workload['pqdt'];
     $bidkey->convention=$workload['convention'];
+		$bidkey->location=$workload['location'];
     $bidkey->bidproc='B';
     $bidkey->state=$workload['state'];
     $bidkey->writedt=$workload['writedt']?$workload['writedt']:date('Y-m-d H:i:s');
@@ -214,11 +348,66 @@ class AutoController extends \yii\console\Controller
     $bidcontent->orign_lnk=$workload['orign_lnk'];
     $bidcontent->attchd_lnk=$workload['attchd_lnk'];
     $bidcontent->bidcomment=$workload['bidcomment'];
+    if(isset($workload['bid_html'])) $bidcontent->bid_html=$workload['bid_html'];
 
     try {
-      $bidvalue->save();
-      $bidcontent->save();
+      if(is_array($workload['goods'])){
+        foreach($workload['goods'] as $g){
+          $bidgoods=new BidGoods([
+            'bidid'=>$bidkey->bidid,
+            'seq'=>$g['seq'],
+            'gcode'=>$g['gcode'],
+            'gname'=>$g['gname'],
+            'standard'=>$g['standard'],
+            'unit'=>$g['unit'],
+            'cnt'=>$g['cnt'],
+          ]);
+          $bidgoods->save();
+        }
+      }
+
+			$sublocal = '';
+			if(is_array($workload['bid_local'])){
+				foreach($workload['bid_local'] as $loc){
+					$code=codeLocal::findByName($loc['name']);					
+					if($code!==null){
+						$tname=str_replace($loc['hname'],'',$code->name);
+						if(strpos($sublocal,$tname)===false){ 
+							$bidlocal=new BidLocal([
+								'bidid'=>$bidkey->bidid,
+								'name'=>$loc['name'],
+								'code'=>$code->code,
+							]);
+							
+							if($sublocal=='')	$sublocal = trim($tname);
+							else	$sublocal=$sublocal.','.trim($tname);
+							$sublocal = trim($sublocal);
+
+							$bidlocal->save();
+
+						}										
+					}
+				}
+				if($sublocal!=='' and ($bidkey->opt&pow(2,11))==0)	$bidkey->opt+=pow(2,11);				
+			}
+			
+			$this->stdout(" > {$sublocal}\n",Console::FG_GREEN);
+			$this->stdout(" > {$bidkey->constnm}\n",Console::FG_GREEN);			
+
+			if($bidkey->constnm!==null and $sublocal!==''){
+				if(strpos($bidkey->constnm,'//')!==false){
+					$bidkey->constnm=$bidkey->constnm.'('.$sublocal.')';
+				}else{					
+					$bidkey->constnm=$bidkey->constnm.'//'.'('.$sublocal.')';
+				}
+			}
+			$this->stdout(" > {$bidkey->constnm}\n",Console::FG_GREEN);			
+
       $bidkey->save();
+			$bidvalue->save();
+      $bidcontent->save();
+      
+			
       if(($bidkey->opt&pow(2,1))>0) $this->stdout(" > 정정공고 입력이 완료되었습니다.\n",Console::FG_GREEN);
       else $this->stdout(" > 일반공고 입력이 완료되었습니다.\n",Console::FG_GREEN);
     }
@@ -235,7 +424,8 @@ class AutoController extends \yii\console\Controller
   }
 
   public function suc_work($job){
-    $workload=Json::decode($job->workload());
+	 
+    $workload=Json::decode($job->workload());	
     try {  
       $this->stdout("i2> [{$workload['bidid']}] {$workload['notinum']} {$workload['constnm']} ({$workload['bidproc']})\n");
       switch($workload['bidproc']){
@@ -277,12 +467,27 @@ class AutoController extends \yii\console\Controller
     $bidres->reswdt=date('Y-m-d H:i:s');
     $bidres->save();
 
+		$bidcontent=BidContent::findOne($workload['bidid']);
+		if($bidcontent!==null){
+			$bidcontent->nbidcomment=$workload['nbidcomment'];
+		}
+		$bidcontent->save();
+
     if(($bidkey->opt&pow(2,5))==0) $bidkey->opt+=pow(2,5);
+		if($workload['constnm']!==null){
+			if(strpos($workload['constnm'],'//')!==false){
+				$bidkey->constnm=$workload['constnm'].'(유찰)';
+			}else{
+				if($bidkey->constnm!==null){
+					$bidkey->constnm=$workload['constnm'].'//'.'(유찰)';
+				}
+			}
+		}
     $bidkey->bidproc='F';
     $bidkey->resdt=date('Y-m-d H:i:s');
     $bidkey->editdt=date('Y-m-d H:i:s');
     $bidkey->save();
-
+    
     $out[]="%y유찰%n";
 
     $this->stdout(Console::renderColoredString(join(' ',$out))."\n");
@@ -342,7 +547,7 @@ class AutoController extends \yii\console\Controller
     $bidkey->bidproc='S';
     $bidkey->resdt=date('Y-m-d H:i:s');
     $bidkey->editdt=date('Y-m-d H:i:s');
-    $bidkey->save();
+    $bidkey->save();    
   }
 }
 

@@ -54,5 +54,13 @@ class BidKey extends \yii\db\ActiveRecord
   public function getBidContent(){
     return $this->hasOne(BidContent::className(),['bidid'=>'bidid']);
   }
+
+  public function getBidGoods(){
+    return $this->hasMany(BidGoods::className(),['bidid'=>'bidid']);
+  }
+
+  public function getBidSubcode(){
+    return $this->hasMany(BidSubcode::className(),['bidid'=>'bidid']);
+  }
 }
 
